@@ -14,23 +14,36 @@ type BlockGroup struct {
 	InodeTable       []*Ext2Inode
 }
 
+type FileType uint8
+
+const (
+	FTUnknown = FileType(iota)
+	FTRegularFile
+	FTDirectory
+	FTCharacterDevice
+	FTBlockDevice
+	FTNamedPipe
+	FTSocket
+	FTSymbolicLink
+)
+
+func INodesPerBlock(blockSize int) int {
+	return blockSize / 128
+}
+
 func LoadBlockGroup(file *os.File) *BlockGroup {
 	blockGroup := BlockGroup{
-		SuperBlock:       LoadSBStruct(file), // 1024 bootblock, 1024*2
-		GroupDescriptors: LoadGDStruct(file), // 2048...1024*3
-		DataBlockBitmap:  Load1KB(file, 1024*4),
-		InodeBitmap:      Load1KB(file, 1024*5),
+		// ignore bootblock 0...1023
+		SuperBlock:       LoadSBStruct(file),    // 1024...2047
+		GroupDescriptors: LoadGDStruct(file),    // 2048...3071
+		DataBlockBitmap:  Load1KB(file, 1024*3), // 3072...4095
+		InodeBitmap:      Load1KB(file, 1024*4), // 4096...5120
 	}
-	INodesCount := int(blockGroup.SuperBlock.SBlocksPerGroup / blockGroup.SuperBlock.SInodesPerGroup)
-	fmt.Println("Inodes Count", blockGroup.SuperBlock.SInodesCount, "Blocks Count", blockGroup.SuperBlock.SBlocksCount)
-	fmt.Println("Inodes per group", blockGroup.SuperBlock.SInodesPerGroup, "Blocks per group", blockGroup.SuperBlock.SBlocksPerGroup)
-
-	// INodesCount := int(blockGroup.SuperBlock.SInodesPerGroup) / int(iNodesPerBlock)
-	fmt.Println(INodesCount)
+	INodesCount := int(blockGroup.SuperBlock.SInodesPerGroup) / INodesPerBlock(1024)
 
 	blockGroup.InodeTable = LoadINDTable(
 		file,
-		blockGroup.GroupDescriptors.BgInodeTable,
+		blockGroup.GroupDescriptors.BgInodeTable*1024,
 		INodesCount,
 	)
 	return &blockGroup
@@ -193,9 +206,84 @@ func LoadINDTable(file *os.File, ufrom uint32, iNodeCount int) []*Ext2Inode {
 		file.ReadAt(blockRaw, int64(from))
 
 		block := (*Ext2Inode)(unsafe.Pointer(&blockRaw[0]))
-		// iNodeTable = append(iNodeTable, block)
 		iNodeTable[i] = block
 	}
-	fmt.Println(iNodeCount, len(iNodeTable))
 	return iNodeTable
+}
+
+type Ext2DirectoryEntry struct {
+	Inode    uint32
+	RecLen   uint16
+	NameLen  uint8
+	FileType uint8
+	Name     [255]byte
+}
+
+// -- file format --
+// EXT2_S_IFSOCK	0xC000	socket
+// EXT2_S_IFLNK	0xA000	symbolic link
+// EXT2_S_IFREG	0x8000	regular file
+// EXT2_S_IFBLK	0x6000	block device
+// EXT2_S_IFDIR	0x4000	directory
+// EXT2_S_IFCHR	0x2000	character device
+// EXT2_S_IFIFO	0x1000	fifo
+type Ext2Dentry struct {
+	Inode    uint32
+	FileType uint8
+	Name     string
+	RecLen   uint16
+}
+
+type Directory struct {
+	Dentries []*Ext2Dentry
+	Name     string
+}
+
+func LoadDentry(file *os.File, from int64, size int) *Ext2Dentry {
+	block := make([]byte, size)
+	file.ReadAt(block, from)
+	rawDir := (*Ext2DirectoryEntry)(unsafe.Pointer(&block[0]))
+
+	dir := &Ext2Dentry{
+		Inode:    rawDir.Inode,
+		RecLen:   rawDir.RecLen,
+		FileType: rawDir.FileType,
+		Name:     string(rawDir.Name[:rawDir.NameLen]),
+	}
+	return dir
+}
+
+func LoadAllDentries(file *os.File, from int64, size int, inodeSize uint32) []*Ext2Dentry {
+	entry := LoadDentry(file, from, size)
+	dentries := []*Ext2Dentry{entry}
+	inSz := int64(inodeSize)
+	entriesSize := int64(0)
+
+	for entriesSize < inSz && entry.Inode != 0 {
+		recLen := int64(entry.RecLen)
+		from += recLen
+		entriesSize += recLen
+		entry = LoadDentry(file, from, size)
+		dentries = append(dentries, entry)
+	}
+
+	return dentries
+}
+
+func LoadRootDir(file *os.File, gd *BlockGroup) {
+	rInPtr := gd.InodeTable[1]
+
+	dataIndex := int64(1024 + (rInPtr.IBlock[0]-1)*1024)
+	dentrySize := int(unsafe.Sizeof(Ext2DirectoryEntry{}))
+	rDir := LoadAllDentries(file, dataIndex, dentrySize, rInPtr.ISize)
+	rootDir := &Directory{
+		Name:     "/",
+		Dentries: rDir,
+	}
+
+	fmt.Println(fmt.Sprintf("%#v", rootDir))
+
+	for i, dir := range rootDir.Dentries {
+		fmt.Println(i, "->", fmt.Sprintf("%#v", dir))
+	}
 }
