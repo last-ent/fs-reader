@@ -23,13 +23,13 @@ func main() {
 	}
 	// Read super block byte stream
 	groupDesc := ext.LoadBlockGroup(file)
-	fmt.Println(fmt.Sprintf("%#v", groupDesc))
 	rootDir := ext.LoadRootDir(file, groupDesc)
 	var asdf *ext.Ext2Dentry
+	fmt.Println(fmt.Sprintf("%#v", groupDesc.InodeTable[13]))
 	i := 0
 	for ; i < len(rootDir.Dentries); i++ {
 		asdf = rootDir.Dentries[i]
-		if asdf.Name == "asdf.txt" {
+		if asdf.Name == "abc.txt" {
 			break
 		}
 	}
@@ -37,6 +37,8 @@ func main() {
 	if i == len(rootDir.Dentries) {
 		fmt.Println("Not found")
 		return
+	} else {
+		fmt.Println("Found the file", fmt.Sprintf("%#v", asdf))
 	}
 
 	ext.LoadFile(file, groupDesc, asdf)

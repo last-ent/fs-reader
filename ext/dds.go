@@ -15,19 +15,6 @@ type BlockGroup struct {
 	InodeTable       []*Ext2Inode
 }
 
-type FileType uint8
-
-const (
-	FTUnknown = FileType(iota)
-	FTRegularFile
-	FTDirectory
-	FTCharacterDevice
-	FTBlockDevice
-	FTNamedPipe
-	FTSocket
-	FTSymbolicLink
-)
-
 func INodesPerBlock(blockSize int) int {
 	return blockSize / 128
 }
@@ -196,13 +183,17 @@ type Ext2Inode struct {
 }
 
 func LoadINDTable(file *os.File, gd *BlockGroup, iNodeCount int) []*Ext2Inode {
-	from := gd.GroupDescriptors.BgInodeTable * 1024
+	ufrom := gd.GroupDescriptors.BgInodeTable * 1024
+	from := int(ufrom)
 	size := 128
-	usize := uint32(size)
 	iNodeTable := make([]*Ext2Inode, iNodeCount)
-	fmt.Println(iNodeCount)
-	for i := 0; i < iNodeCount; i, from = i+1, from+usize {
-		iNodeTable[i] = LoadInode(file, gd, from)
+	for i := 0; i < iNodeCount; i, from = i+1, from+size {
+		blockRaw := make([]byte, size)
+		file.ReadAt(blockRaw, int64(from))
+
+		block := (*Ext2Inode)(unsafe.Pointer(&blockRaw[0]))
+		iNodeTable[i] = block
+
 	}
 	return iNodeTable
 }
@@ -253,7 +244,6 @@ func LoadAllDentries(file *os.File, from int64, size int, inodeSize uint32) []*E
 	dentries := []*Ext2Dentry{entry}
 	inSz := int64(inodeSize)
 	entriesSize := int64(0)
-	fmt.Println(inSz, entriesSize)
 
 	for entriesSize < inSz && entry.Inode != 0 {
 		recLen := int64(entry.RecLen)
@@ -267,12 +257,12 @@ func LoadAllDentries(file *os.File, from int64, size int, inodeSize uint32) []*E
 }
 
 func GetInodeAddr(gd *BlockGroup, index int) int64 {
+	// Previously it was int64(BOOT_BLOCK_SIZE + (index -1) * BLOCK_SIZE)
 	return int64(1024 + (index-1)*1024)
 }
 
 func LoadRootDir(file *os.File, gd *BlockGroup) *Directory {
 	rInPtr := gd.InodeTable[1]
-	fmt.Println(rInPtr)
 
 	dataIndex := GetInodeAddr(gd, int(rInPtr.IBlock[0]))
 	dentrySize := int(unsafe.Sizeof(Ext2DirectoryEntry{}))
@@ -282,8 +272,6 @@ func LoadRootDir(file *os.File, gd *BlockGroup) *Directory {
 		Dentries: rDir,
 	}
 
-	fmt.Println(fmt.Sprintf("%#v", rootDir))
-
 	for i, dir := range rootDir.Dentries {
 		fmt.Println(i, "->", fmt.Sprintf("%#v", dir))
 	}
@@ -291,16 +279,18 @@ func LoadRootDir(file *os.File, gd *BlockGroup) *Directory {
 }
 
 func LoadInode(file *os.File, gd *BlockGroup, inodeIndex uint32) *Ext2Inode {
-	inodeRaw := Load1KB(file, GetInodeAddr(gd, int(inodeIndex)))
+	inodeRaw := LoadNBytes(file, GetInodeAddr(gd, int(inodeIndex)), 128)
 	inode := (*Ext2Inode)(unsafe.Pointer(&inodeRaw[0]))
 	return inode
 }
 
-func LoadInodeBlocks(file *os.File, inode *Ext2Inode, blockRange int) [][]byte {
+func LoadInodeBlocks(file *os.File, gd *BlockGroup, inode *Ext2Inode, blockRange int) [][]byte {
 	inodeBlocks := [][]byte{}
 	for i := 0; i < blockRange; i++ {
-		from := int64(inode.IBlock[i])
-		inodeBlocks = append(inodeBlocks, Load1KB(file, from))
+		from := GetInodeAddr(gd, int(inode.IBlock[i]))
+		block := Load1KB(file, from)
+		fmt.Print(string(block))
+		inodeBlocks = append(inodeBlocks, block)
 	}
 	return inodeBlocks
 }
@@ -311,18 +301,38 @@ func LoadInodeBlocks(file *os.File, inode *Ext2Inode, blockRange int) [][]byte {
 // * i_block[13] points to a double indirect block
 // * i_block[14] points to a triple indirect block
 
+// Doesn't work
 func LoadFile(file *os.File, gd *BlockGroup, fileEntry *Ext2Dentry) {
+	size := 1024
+	fmt.Println("Data arr", fileEntry.Inode, gd.SuperBlock.SFirstDataBlock)
+	from := GetInodeAddr(gd, int(fileEntry.Inode))
+	blockRaw := make([]byte, size)
+	file.ReadAt(blockRaw, from)
+	fmt.Println(string(blockRaw))
+
+	block := (*Ext2Inode)(unsafe.Pointer(&blockRaw[0]))
+	// fmt.Println(fmt.Sprintf("%#v", block))
+
+	blockRaw = make([]byte, size)
+	fmt.Println(int64(block.IBlock[0]))
+	file.ReadAt(blockRaw, int64(block.IBlock[0]))
+	fmt.Println(string(blockRaw))
+
+}
+
+func LoadFileO(file *os.File, gd *BlockGroup, fileEntry *Ext2Dentry) {
 	inode := LoadInode(file, gd, fileEntry.Inode)
-	directBlocks := LoadInodeBlocks(file, inode, 12)
+	fmt.Println(fmt.Sprintf("%#v", inode))
+	directBlocks := LoadInodeBlocks(file, gd, inode, 12)
 
 	singleIndirect := LoadInode(file, gd, inode.IBlock[12])
-	snInBlocks := LoadInodeBlocks(file, singleIndirect, 15)
+	snInBlocks := LoadInodeBlocks(file, gd, singleIndirect, 15)
 
 	doubleIndirect := LoadInode(file, gd, inode.IBlock[13])
 	dbInBlocks := [][]byte{}
 	for i := 0; i < 15; i++ {
 		dbInNode := LoadInode(file, gd, doubleIndirect.IBlock[i])
-		dbInBlocks = append(dbInBlocks, LoadInodeBlocks(file, dbInNode, 15)...)
+		dbInBlocks = append(dbInBlocks, LoadInodeBlocks(file, gd, dbInNode, 15)...)
 	}
 
 	tripleIndirect := LoadInode(file, gd, inode.IBlock[14])
@@ -330,7 +340,7 @@ func LoadFile(file *os.File, gd *BlockGroup, fileEntry *Ext2Dentry) {
 	for i := 0; i < 15; i++ {
 		for j := 0; j < 15; j++ {
 			trInNode := LoadInode(file, gd, tripleIndirect.IBlock[j])
-			trInBlocks = append(trInBlocks, LoadInodeBlocks(file, trInNode, 15)...)
+			trInBlocks = append(trInBlocks, LoadInodeBlocks(file, gd, trInNode, 15)...)
 		}
 	}
 
