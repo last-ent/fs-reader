@@ -23,9 +23,9 @@ func main() {
 	}
 	// Read super block byte stream
 	groupDesc := ext.LoadBlockGroup(file)
+	fmt.Println("max inode count", groupDesc.SuperBlock.SInodesPerGroup)
 	rootDir := ext.LoadRootDir(file, groupDesc)
 	var asdf *ext.Ext2Dentry
-	fmt.Println(fmt.Sprintf("%#v", groupDesc.InodeTable[13]))
 	i := 0
 	for ; i < len(rootDir.Dentries); i++ {
 		asdf = rootDir.Dentries[i]

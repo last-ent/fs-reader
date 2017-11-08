@@ -304,9 +304,11 @@ func LoadInodeBlocks(file *os.File, gd *BlockGroup, inode *Ext2Inode, blockRange
 // Doesn't work
 func LoadFile(file *os.File, gd *BlockGroup, fileEntry *Ext2Dentry) {
 	size := 1024
-	fmt.Println("Data arr", fileEntry.Inode, gd.SuperBlock.SFirstDataBlock)
+	fmt.Println("Data arr", fileEntry.Inode)
+	fmt.Println(gd.InodeTable[fileEntry.Inode])
 	from := GetInodeAddr(gd, int(fileEntry.Inode))
 	blockRaw := make([]byte, size)
+	fmt.Println("from", from)
 	file.ReadAt(blockRaw, from)
 	fmt.Println(string(blockRaw))
 
