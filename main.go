@@ -38,7 +38,7 @@ func main() {
 		fmt.Println("Not found")
 		return
 	} else {
-		fmt.Println("Found the file", fmt.Sprintf("%#v", asdf))
+		fmt.Println("Found the file", fmt.Sprintf("%+v", asdf))
 	}
 
 	ext.LoadFile(file, groupDesc, asdf)

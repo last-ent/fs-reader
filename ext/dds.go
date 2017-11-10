@@ -304,21 +304,27 @@ func LoadInodeBlocks(file *os.File, gd *BlockGroup, inode *Ext2Inode, blockRange
 // Doesn't work
 func LoadFile(file *os.File, gd *BlockGroup, fileEntry *Ext2Dentry) {
 	size := 1024
-	fmt.Println("Data arr", fileEntry.Inode)
-	fmt.Println(gd.InodeTable[fileEntry.Inode])
-	from := GetInodeAddr(gd, int(fileEntry.Inode))
+	fileInode := gd.InodeTable[fileEntry.Inode-1]
+	fmt.Println(fmt.Sprintf("%#v", fileInode))
+
 	blockRaw := make([]byte, size)
-	fmt.Println("from", from)
+	from := int64(fileInode.IBlock[0]) * 1024
 	file.ReadAt(blockRaw, from)
 	fmt.Println(string(blockRaw))
 
-	block := (*Ext2Inode)(unsafe.Pointer(&blockRaw[0]))
-	// fmt.Println(fmt.Sprintf("%#v", block))
+	// from := GetInodeAddr(gd, int(fileEntry.Inode))
+	// blockRaw := make([]byte, size)
+	// fmt.Println("from", from)
+	// file.ReadAt(blockRaw, from)
+	// fmt.Println(string(blockRaw))
 
-	blockRaw = make([]byte, size)
-	fmt.Println(int64(block.IBlock[0]))
-	file.ReadAt(blockRaw, int64(block.IBlock[0]))
-	fmt.Println(string(blockRaw))
+	// block := (*Ext2Inode)(unsafe.Pointer(&blockRaw[0]))
+	// // fmt.Println(fmt.Sprintf("%#v", block))
+
+	// blockRaw = make([]byte, size)
+	// fmt.Println(int64(block.IBlock[0]))
+	// file.ReadAt(blockRaw, int64(block.IBlock[0]))
+	// fmt.Println(string(blockRaw))
 
 }
 
